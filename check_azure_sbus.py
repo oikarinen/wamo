@@ -18,6 +18,12 @@ import exceptions
 logger = None            # pylint: disable-msg=C0103
 
 COUNTERS     = {
+    'length'         : { 'help' : 'Get Length',
+                            'measure'   :  'total',
+                            'nagios_message' : 'Length %s',
+                            'unit' : '',
+                            #'direction' : 'NA'
+                            },          
     'size'         : { 'help' : 'Get Max size',
                             'measure'   :  'total',
                             'nagios_message' : 'Max size %s',
@@ -140,6 +146,7 @@ def eval_counter_for_nagios(row, queue, counter, warning, critical, verbosity):
     critical -- Nagios critical range
     """
     prop = counter['measure']    
+    logger.debug("Eval: %s total:%s avg:%s min:%s max:%s" % (counter['help'], row.total, row.average, row.min, row.max))
     val = property_value(row, prop)
     unit = counter['unit']
 
@@ -247,6 +254,7 @@ def check_sbus_errors_all(management, sbus_type, key, warning,
     for namespace in namespaces:
         error_code, error = check_sbus_errors(management, 
                                                  namespace.name,
+                                                 None,
                                                  sbus_type, 
                                                  key, 
                                                  warning, 
@@ -257,7 +265,7 @@ def check_sbus_errors_all(management, sbus_type, key, warning,
     return error_code_all, ', '.join(errors)
 
 
-def check_sbus_errors(management, namespace, sbus_type, key,
+def check_sbus_errors(management, namespace, qname, sbus_type, key,
                          warning, critical, verbosity):
     """Check service bus errors for the metric given by key
     management -- service management object
@@ -280,16 +288,20 @@ def check_sbus_errors(management, namespace, sbus_type, key,
         rows = {}
         metrics = []
         if sbus_type == 'topic':
-            for topic in management.list_topics(namespace):
-                metrics = management.get_supported_metrics_topic(namespace, topic.name)
+            for queue in management.list_topics(namespace):
+                if qname and queue.name != qname:
+                        continue
+                metrics = management.get_supported_metrics_topic(namespace, queue.name)
                 if key != 'all':
                     metrics = [metric for metric in metrics if metric.name == key]
                 for metric in metrics:
                     if not metric.name in rows:
                         rows[metric.name] = {}
-                    rows[metric.name][topic.name] = management.get_metrics_data_topic(namespace, topic.name, metric.name, rollup, recenthour_filter)
+                    rows[metric.name][queue.name] = management.get_metrics_data_topic(namespace, queue.name, metric.name, rollup, recenthour_filter)
         elif sbus_type == 'queue':
             for queue in management.list_queues(namespace):
+                if qname and queue.name != qname:
+                        continue
                 metrics = management.get_supported_metrics_queue(namespace, queue.name)
                 if key != 'all':
                     metrics = [metric for metric in metrics if metric.name == key]
@@ -340,7 +352,7 @@ def check_sbus_errors(management, namespace, sbus_type, key,
                     errors.append(error)        
                 else:
                     error_code = 0
-                    errors.append("OK: No data %s/%s" % (queue,metric))
+                    #errors.append("OK: No data %s/%s" % (queue,metric))
                     logger.debug('Metrics data not available for %s/%s' % (queue,metric))
 
     except azure.WindowsAzureMissingResourceError, error:
@@ -400,8 +412,17 @@ def main():
                                                      args.critical, 
                                                      args.verbose)
     else:
+        namespace = None
+        queue = None
+        temp = args.namespace.lower().split(':', 1)
+        if (len(temp) > 1):
+            namespace, queue = temp
+        else:
+            namespace = temp
+
         error_code, error = check_sbus_errors(management, 
-                                                 args.namespace.lower(), 
+                                                 namespace, 
+                                                 queue,
                                                  args.type,
                                                  args.key, 
                                                  args.warning, 
